@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global GDP Changes Timeline</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson@3"></script>
+    <style>
+        @keyframes blink {
+            0%, 100% { opacity: 0.1; }
+            50% { opacity: 1; }
+        }
+        .gdp-icon {
+            font-weight: 800;
+            fill: #fbbf24; /* Amber-400 */
+            filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.5));
+            pointer-events: none;
+        }
+        .country {
+            fill: #1e293b;
+            stroke: #0f172a;
+            stroke-width: 0.5px;
+        }
+        .country:hover {
+            fill: #334155;
+            transition: fill 0.2s;
+        }
+        #tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            border: 1px solid #475569;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            z-index: 100;
+        }
+        .timeline-slider::-webkit-slider-runnable-track {
+            background: #334155;
+            height: 6px;
+            border-radius: 3px;
+        }
+        .timeline-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #fbbf24;
+            margin-top: -6px;
+            cursor: pointer;
+        }
+        .history-log::-webkit-scrollbar {
+            width: 4px;
+        }
+        .history-log::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen flex flex-col items-center p-4">
+
+    <!-- Header -->
+    <header class="text-center mb-6 max-w-3xl w-full">
+        <h1 class="text-3xl font-bold text-white mb-2">Global GDP Changes Timeline (1974-2024)</h1>
+        <p class="text-slate-400 text-sm italic">
+            Blink frequency is fixed to the country's 50-year average performance.
+        </p>
+    </header>
+
+    <div class="flex flex-col lg:flex-row gap-6 w-full max-w-7xl">
+        <!-- Main Map Area -->
+        <div class="flex-grow">
+            <div class="relative bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 overflow-hidden">
+                <div id="tooltip"></div>
+                <svg id="map" class="w-full h-auto" viewBox="0 0 960 500"></svg>
+                
+                <!-- Year Overlay -->
+                <div class="absolute top-4 right-6 pointer-events-none">
+                    <div class="text-6xl font-black text-slate-700/40 select-none" id="year-display">1974</div>
+                </div>
+            </div>
+
+            <!-- Timeline Control Panel -->
+            <div class="mt-6 bg-slate-900 p-6 rounded-xl border border-slate-800 shadow-lg">
+                <div class="flex items-center gap-6">
+                    <button id="play-pause" class="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold py-2 px-6 rounded-lg transition-colors min-w-[100px]">
+                        Pause
+                    </button>
+                    <div class="flex-grow">
+                        <input type="range" id="timeline" min="1974" max="2024" value="1974" class="timeline-slider w-full appearance-none bg-transparent cursor-pointer">
+                        <div class="flex justify-between text-[10px] text-slate-500 mt-2 uppercase tracking-widest font-bold">
+                            <span>1974</span>
+                            <span>1984</span>
+                            <span>1994</span>
+                            <span>2004</span>
+                            <span>2014</span>
+                            <span>2024</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session Changes / History Log -->
+        <div class="w-full lg:w-72 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+            <div class="p-4 border-b border-slate-800 bg-slate-800/50 flex justify-between items-center">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-amber-400">Interaction Log</h2>
+                <span class="text-[10px] bg-slate-700 px-2 py-0.5 rounded text-slate-300">Live</span>
+            </div>
+            <div id="history-log" class="history-log p-4 space-y-3 h-[400px] lg:h-auto lg:flex-grow overflow-y-auto text-xs font-mono">
+                <div class="text-slate-500 italic">Session started...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Speed Legend -->
+    <div class="mt-6 flex gap-8 items-center opacity-70">
+        <div class="flex items-center gap-2">
+            <div class="text-amber-400 text-xl font-black animate-[blink_1s_infinite]">$</div>
+            <span class="text-[10px] uppercase">Fast Growth (>7%)</span>
+        </div>
+        <div class="flex items-center gap-2 text-slate-500">|</div>
+        <div class="flex items-center gap-2">
+            <div class="text-amber-400 text-xl font-black animate-[blink_3s_infinite]">$</div>
+            <span class="text-[10px] uppercase">Slow Growth (<3%)</span>
+        </div>
+    </div>
+
+    <script>
+        const gdpData = {
+            "China": 9.2, "India": 6.1, "Vietnam": 6.5, "Guyana": 12.0, "Ireland": 5.8,
+            "South Korea": 6.3, "United States of America": 2.5, "Germany": 1.7, "Japan": 1.5, 
+            "United Kingdom": 2.0, "France": 1.9, "Brazil": 2.6, "Australia": 3.0, "Canada": 2.3, 
+            "Italy": 1.2, "Russia": 1.8, "Nigeria": 3.5, "South Africa": 2.1, "Mexico": 2.2, 
+            "Indonesia": 5.2, "Turkey": 4.5, "Saudi Arabia": 3.2, "Egypt": 4.8, "Bangladesh": 5.5, 
+            "Pakistan": 4.2, "Thailand": 4.8, "Poland": 3.4, "Philippines": 5.8, "Spain": 2.3, 
+            "Argentina": 1.8, "Singapore": 6.0, "Malaysia": 5.8, "Ethiopia": 6.2, "Rwanda": 7.0, 
+            "Israel": 3.8, "Norway": 2.2, "Colombia": 3.4, "Kenya": 4.1, "Venezuela": 0.2
+        };
+
+        const width = 960;
+        const height = 500;
+        const svg = d3.select("#map");
+        const tooltip = d3.select("#tooltip");
+        const yearDisplay = document.getElementById('year-display');
+        const timeline = document.getElementById('timeline');
+        const playBtn = document.getElementById('play-pause');
+        const historyLog = document.getElementById('history-log');
+
+        let currentYear = 1974;
+        let isPlaying = true;
+        let timer;
+
+        const projection = d3.geoMercator().scale(150).translate([width / 2, height / 1.5]);
+        const path = d3.geoPath().projection(projection);
+
+        function logAction(message) {
+            const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const entry = document.createElement('div');
+            entry.className = "border-l-2 border-amber-500/50 pl-2 py-1 animate-in fade-in slide-in-from-left-2 duration-300";
+            entry.innerHTML = `<span class="text-slate-500">[${time}]</span> <span class="text-slate-200">${message}</span>`;
+            historyLog.prepend(entry);
+        }
+
+        async function initMap() {
+            try {
+                const world = await d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json");
+                const countries = topojson.feature(world, world.objects.countries).features;
+
+                svg.append("g")
+                    .selectAll("path")
+                    .data(countries)
+                    .enter()
+                    .append("path")
+                    .attr("d", path)
+                    .attr("class", "country")
+                    .on("mouseover", (event, d) => {
+                        const name = d.properties.name;
+                        const growth = gdpData[name] || "N/A";
+                        tooltip.style("opacity", 1)
+                            .html(`<div class="font-bold text-amber-400">${name}</div><div class="text-xs">Avg Growth: ${growth}%</div>`);
+                    })
+                    .on("mousemove", (event) => {
+                        tooltip.style("left", (event.pageX + 15) + "px")
+                               .style("top", (event.pageY - 20) + "px");
+                    })
+                    .on("mouseout", () => tooltip.style("opacity", 0));
+
+                svg.append("g")
+                    .selectAll("text")
+                    .data(countries)
+                    .enter()
+                    .append("text")
+                    .attr("class", "gdp-icon")
+                    .attr("transform", d => {
+                        const centroid = path.centroid(d);
+                        return isNaN(centroid[0]) ? "translate(-100,-100)" : `translate(${centroid[0]}, ${centroid[1]})`;
+                    })
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "central")
+                    .attr("font-size", d => path.area(d) > 500 ? "14px" : "10px")
+                    .text("$")
+                    .style("display", d => gdpData[d.properties.name] ? "block" : "none")
+                    .style("animation", d => {
+                        const growth = gdpData[d.properties.name] || 2;
+                        let speed = 3 - ((Math.min(10, Math.max(0.1, growth)) - 0.1) / 9.9) * 2;
+                        return `blink ${speed.toFixed(2)}s infinite ease-in-out`;
+                    });
+
+                startTimeline();
+                logAction("Map initialized at year 1974.");
+
+            } catch (error) {
+                console.error("Map Error:", error);
+            }
+        }
+
+        function updateYear(year) {
+            currentYear = parseInt(year);
+            yearDisplay.innerText = currentYear;
+            timeline.value = currentYear;
+        }
+
+        function startTimeline() {
+            timer = setInterval(() => {
+                if (isPlaying) {
+                    let nextYear = currentYear + 1;
+                    if (nextYear > 2024) nextYear = 1974;
+                    updateYear(nextYear);
+                }
+            }, 800); 
+        }
+
+        timeline.addEventListener('input', (e) => {
+            const oldYear = currentYear;
+            updateYear(e.target.value);
+            if (!isPlaying) {
+                logAction(`Jumped from ${oldYear} to ${currentYear}`);
+            }
+        });
+
+        timeline.addEventListener('change', () => {
+            if (isPlaying) {
+                logAction(`Timeline scrubbed to ${currentYear}`);
+            }
+        });
+
+        playBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            playBtn.innerText = isPlaying ? "Pause" : "Play";
+            logAction(isPlaying ? `Playback resumed at ${currentYear}` : `Playback paused at ${currentYear}`);
+        });
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
